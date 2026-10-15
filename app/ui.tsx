@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Role } from "@/lib/auth";
 import { api, type Trace } from "@/lib/clientApi";
 import type { Vehicle } from "@/lib/db";
@@ -47,6 +47,11 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const [slow, setSlow] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const inflight = useRef<AbortController | null>(null);
+  // the view behind the rows on screen; Cancel goes back to it
+  const shown = useRef<{ key: string; view: View } | null>(null);
 
   // show the saved search once the view state has loaded
   useEffect(() => {
@@ -64,24 +69,49 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
 
   useEffect(() => {
     if (status === "loading") return; // wait for the saved view, or we'd fetch twice
+    const key = JSON.stringify([view.limit, view.q, view.cursor, view.dir, reload]);
+    if (shown.current?.key === key) return; // already on screen (e.g. right after Cancel)
+
     const ctrl = new AbortController();
+    inflight.current = ctrl;
+    setLoading(true);
     const params = new URLSearchParams({ limit: String(view.limit), dir: view.dir });
     if (view.cursor) params.set("cursor", view.cursor);
     if (view.q) params.set("q", view.q);
+    if (slow) params.set("slow", "1");
+    const requested = { ...view };
+
     call("GET", `/api/vehicles?${params}`, { signal: ctrl.signal })
       .then(async (res) => {
         const body = await res.json();
         if (res.ok) {
+          shown.current = { key, view: requested };
           setPage(body);
           setError(null);
-        } else if (res.status === 400 && view.cursor) {
+        } else if (res.status === 400 && requested.cursor) {
           update({ cursor: null, dir: "next" }); // a stale saved cursor: fall back to page 1
         } else setError(`${res.status}: ${body.message}`);
       })
-      .catch((e) => e.name !== "AbortError" && setError(String(e)));
+      .catch((e) => e.name !== "AbortError" && setError(String(e)))
+      .finally(() => {
+        if (inflight.current === ctrl) {
+          inflight.current = null;
+          setLoading(false);
+        }
+      });
     return () => ctrl.abort(); // a newer click cancels the stale request
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.limit, view.q, view.cursor, view.dir, status, reload]);
+
+  function cancel() {
+    inflight.current?.abort();
+    if (shown.current) {
+      const { limit, q, cursor, dir } = shown.current.view;
+      update({ limit, q, cursor, dir }); // back to the page still on screen, no refetch
+      setSearch(q);
+    }
+    setNotice("Request cancelled. The backend query was aborted too.");
+  }
 
   async function remove(v: Vehicle) {
     const res = await call("DELETE", `/api/vehicles/${v.id}`);
@@ -148,6 +178,9 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
               ))}
             </select>
           </label>
+          <label>
+            <input type="checkbox" checked={slow} onChange={(e) => setSlow(e.target.checked)} /> Slow backend (3 s)
+          </label>
           <button className="ghost" onClick={resetView} disabled={status !== "ready"}>
             Reset view
           </button>
@@ -163,37 +196,47 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
       {error && <p className="error" role="alert">{error}</p>}
       {notice && !error && <p className="notice" role="status">{notice}</p>}
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Plate</th>
-              <th>Model</th>
-              <th>Status</th>
-              <th>Created (UTC)</th>
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {page?.items.map((v) => (
-              <tr key={v.id}>
-                <td className="num">{v.id}</td>
-                <td>{v.plate}</td>
-                <td>{v.model}</td>
-                <td><span className={`dot ${v.status}`} />{v.status}</td>
-                <td>{fmt.format(v.createdAt)}</td>
-                <td>
-                  {/* Shown to the viewer on purpose: the BFF answers 403 anyway. */}
-                  <button className="ghost danger" onClick={() => remove(v)}>Delete</button>
-                </td>
+      <div className="table-area" aria-busy={loading}>
+        {loading && (
+          <div className="overlay">
+            <div className="overlay-box" role="status">
+              <span className="spinner" aria-hidden /> Loading…
+              <button className="ghost" onClick={cancel}>Cancel</button>
+            </div>
+          </div>
+        )}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Plate</th>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Created (UTC)</th>
+                <th aria-label="Actions" />
               </tr>
-            ))}
-            {page?.items.length === 0 && (
-              <tr><td colSpan={6} className="muted">No vehicles match.</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {page?.items.map((v) => (
+                <tr key={v.id}>
+                  <td className="num">{v.id}</td>
+                  <td>{v.plate}</td>
+                  <td>{v.model}</td>
+                  <td><span className={`dot ${v.status}`} />{v.status}</td>
+                  <td>{fmt.format(v.createdAt)}</td>
+                  <td>
+                    {/* Shown to the viewer on purpose: the BFF answers 403 anyway. */}
+                    <button className="ghost danger" onClick={() => remove(v)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+              {page?.items.length === 0 && (
+                <tr><td colSpan={6} className="muted">No vehicles match.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <nav className="row pager" aria-label="Pagination">
@@ -208,7 +251,7 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
         <ul className="log">
           {log.map((e, i) => (
             <li key={i}>
-              <code className={e.status < 400 ? "ok" : "bad"}>{e.status}</code>{" "}
+              <code className={e.status && e.status < 400 ? "ok" : "bad"}>{e.status || "cancelled"}</code>{" "}
               <code>{e.method} {decodeURIComponent(e.url)}</code> <span className="muted">{e.ms} ms</span>
             </li>
           ))}

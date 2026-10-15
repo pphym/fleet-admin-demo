@@ -98,6 +98,22 @@ The server validates each PATCH and applies it in one transaction, scoped to the
 
 **401 → refresh → retry** ([lib/clientApi.ts](lib/clientApi.ts)): the access token is short-lived (`ACCESS_TTL`, 15 min by default) and the refresh token lasts a day. Both are httpOnly cookies. On a 401 the client calls `/api/auth/refresh` once and retries the original request. Concurrent 401s share a single refresh call. A refresh token is rejected where an access token is expected, and the reverse. Each refresh looks the user up again, so a role change applies at the next refresh. The **Expire my token** button shows the whole flow in the request log.
 
+## 4. Cancellable loading
+
+Tick **Slow backend (3 s)** and change page. After 200 ms a loading box appears with a **Cancel** button. A CSS animation delay keeps fast pages from flickering, and the box is `sticky`, so it stays on screen however far down you are.
+
+Cancel goes all the way down:
+
+```
+Cancel → AbortController.abort()            (browser)
+       → request.signal aborts the BFF's fetch (lib/bff.ts passes it on)
+       → the backend's wait/query stops      ("[backend] slow query cancelled" in the server log)
+```
+
+- The rows already on screen stay. The view (page, search) goes back to match them, without fetching again.
+- Clicking again while a request is in flight aborts the stale request, so a slow old response can never overwrite a newer page.
+- The request log shows aborted requests as `cancelled`.
+
 ## Known limits (on purpose)
 
 - The data lives in memory and is re-seeded on restart, so deletes don't survive a restart. For durable data, swap in Turso or Postgres; the SQL stays the same.

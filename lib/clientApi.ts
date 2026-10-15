@@ -1,3 +1,4 @@
+/** status 0 = the request was aborted before a response arrived */
 export type Trace = (entry: { method: string; url: string; status: number; ms: number }) => void;
 
 type Options = { body?: unknown; signal?: AbortSignal; trace?: Trace };
@@ -16,9 +17,15 @@ function refreshOnce(trace?: Trace): Promise<boolean> {
 
 async function timed(method: string, url: string, init: RequestInit, trace?: Trace) {
   const t0 = performance.now();
-  const res = await fetch(url, init);
-  trace?.({ method, url, status: res.status, ms: Math.round(performance.now() - t0) });
-  return res;
+  const ms = () => Math.round(performance.now() - t0);
+  try {
+    const res = await fetch(url, init);
+    trace?.({ method, url, status: res.status, ms: ms() });
+    return res;
+  } catch (e) {
+    if (init.signal?.aborted) trace?.({ method, url, status: 0, ms: ms() });
+    throw e;
+  }
 }
 
 /**
