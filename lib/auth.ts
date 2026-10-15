@@ -2,10 +2,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export type Role = "admin" | "viewer";
 export type Action = "VIEW" | "DELETE";
-export type User = { sub: string; name: string; role: Role; exp: number };
+export type TokenType = "access" | "refresh";
+export type User = { sub: string; name: string; role: Role; exp: number; typ: TokenType };
+type Account = Omit<User, "exp" | "typ">;
 
 /** Fake accounts — the demo is about the BFF, not about passwords. */
-export const DEMO_USERS: Record<Role, Omit<User, "exp">> = {
+export const DEMO_USERS: Record<Role, Account> = {
   admin: { sub: "u1", name: "Alice", role: "admin" },
   viewer: { sub: "u2", name: "Bob", role: "viewer" },
 };
@@ -34,12 +36,15 @@ const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64url");
 const HEADER = b64(JSON.stringify({ alg: "HS256", typ: "JWT" }));
 const sign = (data: string) => createHmac("sha256", secret()).update(data).digest();
 
-export function signToken(user: Omit<User, "exp">, ttlSeconds = 3600): string {
-  const body = b64(JSON.stringify({ ...user, exp: Math.floor(Date.now() / 1000) + ttlSeconds }));
+export function signToken(account: Account, typ: TokenType, ttlSeconds: number): string {
+  const { sub, name, role } = account;
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const body = b64(JSON.stringify({ sub, name, role, exp, typ }));
   return `${HEADER}.${body}.${b64(sign(`${HEADER}.${body}`))}`;
 }
 
-export function verifyToken(token: string | null | undefined): User | null {
+/** A refresh token is never accepted where an access token is expected, and vice versa. */
+export function verifyToken(token: string | null | undefined, typ: TokenType = "access"): User | null {
   const [header, body, sig] = token?.split(".") ?? [];
   if (header !== HEADER || !body || !sig) return null;
   const expected = sign(`${header}.${body}`);
@@ -47,10 +52,16 @@ export function verifyToken(token: string | null | undefined): User | null {
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   try {
     const user = JSON.parse(Buffer.from(body, "base64url").toString()) as User;
-    return user.exp > Date.now() / 1000 ? user : null;
+    return user.typ === typ && user.exp > Date.now() / 1000 ? user : null;
   } catch {
     return null;
   }
 }
 
 export const AUTH_COOKIE = "auth_token";
+export const REFRESH_COOKIE = "refresh_token";
+
+// Short-lived access token, long-lived refresh token. ACCESS_TTL is an env knob
+// so the 401 → refresh → retry path is easy to watch (e.g. ACCESS_TTL=20).
+export const ACCESS_TTL = Number(process.env.ACCESS_TTL) || 15 * 60;
+export const REFRESH_TTL = 24 * 60 * 60;

@@ -1,9 +1,14 @@
 import { cookies } from "next/headers";
-import { AUTH_COOKIE, verifyToken } from "@/lib/auth";
+import { AUTH_COOKIE, REFRESH_COOKIE, verifyToken } from "@/lib/auth";
 import { Login, VehicleTable } from "./ui";
 
 export default async function Page() {
-  const user = verifyToken((await cookies()).get(AUTH_COOKIE)?.value);
+  const jar = await cookies();
+  // An expired access token is fine while the refresh token is valid:
+  // the first API call gets 401, refreshes, and retries.
+  const user =
+    verifyToken(jar.get(AUTH_COOKIE)?.value) ??
+    verifyToken(jar.get(REFRESH_COOKIE)?.value, "refresh");
   return (
     <main>
       <header>

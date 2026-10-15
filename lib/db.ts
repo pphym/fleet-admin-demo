@@ -27,6 +27,14 @@ export function createDb(rows: number, spanHours = 24 * 365): DatabaseSync {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX vehicles_keyset ON vehicles (created_at DESC, id DESC);
+
+    -- per-user view settings: one row per (user, key), value is JSON
+    CREATE TABLE ui_state (
+      user_sub TEXT NOT NULL,
+      key      TEXT NOT NULL,
+      value    TEXT NOT NULL,
+      PRIMARY KEY (user_sub, key)
+    );
   `);
 
   // deterministic PRNG so every boot / test run sees the same data

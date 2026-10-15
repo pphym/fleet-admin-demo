@@ -3,8 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { Role } from "@/lib/auth";
+import { api, type Trace } from "@/lib/clientApi";
 import type { Vehicle } from "@/lib/db";
 import type { Page } from "@/lib/pagination";
+import { LIMITS, useViewState, type View } from "./useViewState";
 
 export function Login() {
   const router = useRouter();
@@ -23,57 +25,63 @@ export function Login() {
   );
 }
 
-type Nav = { cursor: string | null; dir: "next" | "prev" };
-type LogEntry = { method: string; url: string; status: number; ms: number };
+type LogEntry = Parameters<Trace>[0];
 
 const fmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
 
 export function VehicleTable({ name, role }: { name: string; role: Role }) {
   const router = useRouter();
-  const [nav, setNav] = useState<Nav>({ cursor: null, dir: "next" });
-  const [limit, setLimit] = useState(20);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const trace: Trace = (e) => setLog((l) => [e, ...l].slice(0, 8));
+
+  // every request goes through api(): 401 → refresh → retry; if that fails, sign in again
+  const call: typeof api = async (method, url, opts) => {
+    const res = await api(method, url, { ...opts, trace });
+    if (res.status === 401) router.refresh();
+    return res;
+  };
+
+  const { view, update, status, reset } = useViewState(call);
   const [search, setSearch] = useState("");
-  const [q, setQ] = useState("");
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [log, setLog] = useState<LogEntry[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+
+  // show the saved search once the view state has loaded
+  useEffect(() => {
+    if (status === "ready") setSearch(view.q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   // debounce the search box, and start again from page 1
   useEffect(() => {
-    if (search.trim() === q) return; // nothing changed (also skips the first render)
-    const t = setTimeout(() => {
-      setQ(search.trim());
-      setNav({ cursor: null, dir: "next" });
-    }, 300);
+    if (search.trim() === view.q) return; // nothing changed
+    const t = setTimeout(() => update({ q: search.trim(), cursor: null, dir: "next" }), 300);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  async function call(method: string, url: string, signal?: AbortSignal) {
-    const t0 = performance.now();
-    const res = await fetch(url, { method, signal });
-    setLog((l) => [{ method, url, status: res.status, ms: Math.round(performance.now() - t0) }, ...l].slice(0, 6));
-    if (res.status === 401) router.refresh(); // token expired → back to the login card
-    return res;
-  }
-
   useEffect(() => {
+    if (status === "loading") return; // wait for the saved view, or we'd fetch twice
     const ctrl = new AbortController();
-    const params = new URLSearchParams({ limit: String(limit), dir: nav.dir });
-    if (nav.cursor) params.set("cursor", nav.cursor);
-    if (q) params.set("q", q);
-    call("GET", `/api/vehicles?${params}`, ctrl.signal)
+    const params = new URLSearchParams({ limit: String(view.limit), dir: view.dir });
+    if (view.cursor) params.set("cursor", view.cursor);
+    if (view.q) params.set("q", view.q);
+    call("GET", `/api/vehicles?${params}`, { signal: ctrl.signal })
       .then(async (res) => {
         const body = await res.json();
         if (res.ok) {
           setPage(body);
           setError(null);
+        } else if (res.status === 400 && view.cursor) {
+          update({ cursor: null, dir: "next" }); // a stale saved cursor: fall back to page 1
         } else setError(`${res.status}: ${body.message}`);
       })
       .catch((e) => e.name !== "AbortError" && setError(String(e)));
     return () => ctrl.abort(); // a newer click cancels the stale request
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nav, limit, q, reload]);
+  }, [view.limit, view.q, view.cursor, view.dir, status, reload]);
 
   async function remove(v: Vehicle) {
     const res = await call("DELETE", `/api/vehicles/${v.id}`);
@@ -86,12 +94,25 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
     }
   }
 
+  async function resetView() {
+    if (await reset()) {
+      setSearch("");
+      setNotice("View reset to defaults.");
+    }
+  }
+
+  async function expireToken() {
+    await fetch("/api/auth/expire", { method: "POST" });
+    setNotice("Access token expired. The next request gets 401, refreshes, then retries.");
+    setReload((n) => n + 1);
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.refresh();
   }
 
-  const go = (cursor: string | null, dir: Nav["dir"]) => setNav({ cursor, dir });
+  const go = (cursor: string | null, dir: View["dir"]) => update({ cursor, dir });
 
   return (
     <section className="card">
@@ -99,7 +120,12 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
         <span>
           Signed in as <b>{name}</b> <span className={`badge ${role}`}>{role}</span>
         </span>
-        <button className="ghost" onClick={logout}>Sign out</button>
+        <span className="row">
+          <button className="ghost" onClick={expireToken} title="Show the 401 → refresh → retry flow">
+            Expire my token
+          </button>
+          <button className="ghost" onClick={logout}>Sign out</button>
+        </span>
       </div>
 
       <div className="row spread">
@@ -110,23 +136,32 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search plate"
         />
-        <label>
-          Rows{" "}
-          <select
-            value={limit}
-            onChange={(e) => {
-              setLimit(Number(e.target.value));
-              go(null, "next");
-            }}
-          >
-            {[10, 20, 50, 100].map((n) => (
-              <option key={n}>{n}</option>
-            ))}
-          </select>
-        </label>
+        <span className="row">
+          <label>
+            Rows{" "}
+            <select
+              value={view.limit}
+              onChange={(e) => update({ limit: Number(e.target.value), cursor: null, dir: "next" })}
+            >
+              {LIMITS.map((n) => (
+                <option key={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+          <button className="ghost" onClick={resetView} disabled={status !== "ready"}>
+            Reset view
+          </button>
+        </span>
       </div>
 
+      <p className="muted small">
+        {status === "unavailable"
+          ? "Saved view could not be loaded. Using defaults, and changes are not saved."
+          : "Rows per page, search and current page are saved to your account. Reload or sign in again to see them come back."}
+      </p>
+
       {error && <p className="error" role="alert">{error}</p>}
+      {notice && !error && <p className="notice" role="status">{notice}</p>}
 
       <div className="table-wrap">
         <table>
@@ -173,8 +208,8 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
         <ul className="log">
           {log.map((e, i) => (
             <li key={i}>
-              <code className={e.status < 400 ? "ok" : "bad"}>{e.status}</code> <code>{e.method} {decodeURIComponent(e.url)}</code>{" "}
-              <span className="muted">{e.ms} ms</span>
+              <code className={e.status < 400 ? "ok" : "bad"}>{e.status}</code>{" "}
+              <code>{e.method} {decodeURIComponent(e.url)}</code> <span className="muted">{e.ms} ms</span>
             </li>
           ))}
         </ul>

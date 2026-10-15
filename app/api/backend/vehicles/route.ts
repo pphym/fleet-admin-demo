@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireBearer } from "@/lib/backendAuth";
+import { authorize } from "@/lib/backendAuth";
 import { getDb } from "@/lib/db";
 import { fail } from "@/lib/http";
 import { BadCursorError, listVehicles } from "@/lib/pagination";
 
 // GET /api/backend/vehicles?cursor=&dir=next|prev&limit=20&q=
 export function GET(request: NextRequest) {
-  const denied = requireBearer(request, "VIEW");
-  if (denied) return denied;
+  const { error } = authorize(request, "VIEW");
+  if (error) return error;
 
   const p = request.nextUrl.searchParams;
   const limit = Number(p.get("limit") ?? 20);

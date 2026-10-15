@@ -1,9 +1,10 @@
 # Fleet Admin Demo
 
-A small vehicle admin table that shows two backend patterns I use at work, rebuilt from scratch on **fake data**:
+A small vehicle admin table that shows patterns I use at work, rebuilt from scratch on **fake data**:
 
 1. **Keyset (cursor) pagination**: First / Prev / Next / Last over 10,000 rows. Every page costs the same, and rows are never skipped or repeated while the data changes.
 2. **BFF with server-side, fail-closed permissions**: the browser never sees the JWT. A Next.js route reads it from an httpOnly cookie, checks the permission for the action, and forwards the request to the backend as `Authorization: Bearer`.
+3. **Per-user view state with refresh-token retry**: rows per page, search and current page are saved to the user's account. Only the changed keys are sent, in one debounced bulk request. An expired token is refreshed and the request retried, without the user noticing.
 
 No database server and no extra dependencies: it uses Next.js, Node's built-in `node:sqlite` (in memory) and `node:crypto` for the JWT.
 
@@ -77,6 +78,25 @@ curl -c jar -X POST localhost:3000/api/auth/login -d '{"user":"viewer"}'
 curl -b jar -X DELETE localhost:3000/api/vehicles/1          # 403 Forbidden
 curl -X DELETE localhost:3000/api/backend/vehicles/1         # 401 (no Bearer)
 ```
+
+## 3. Per-user view state
+
+```
+GET    /api/ui-state                      → { state: { "vehicles.limit": 50, … } }
+PATCH  /api/ui-state  { changes: { "vehicles.q": "DEMO", "vehicles.cursor": null } }
+DELETE /api/ui-state                      → back to defaults ("Reset view")
+```
+
+The client hook is [app/useViewState.ts](app/useViewState.ts):
+
+- **Load first, then save.** Nothing is saved until the stored view has loaded, so the defaults the page starts with never overwrite what the user saved.
+- **Diff against the last saved snapshot.** Only changed keys go out, batched into one PATCH after 500 ms. If a save fails, those keys still differ and go out with the next change.
+- **Retry the load with backoff** on 5xx or network errors. If it keeps failing, the page uses defaults and stops saving, rather than clobbering stored data.
+- **Validate on read too.** A stored value that is no longer valid (an unknown page size, or a cursor that now gets 400) falls back to its default.
+
+The server validates each PATCH and applies it in one transaction, scoped to the token's user ([lib/uiState.ts](lib/uiState.ts)): at most 20 keys, a key pattern, and 2 KB per value. `null` deletes a key.
+
+**401 → refresh → retry** ([lib/clientApi.ts](lib/clientApi.ts)): the access token is short-lived (`ACCESS_TTL`, 15 min by default) and the refresh token lasts a day. Both are httpOnly cookies. On a 401 the client calls `/api/auth/refresh` once and retries the original request. Concurrent 401s share a single refresh call. A refresh token is rejected where an access token is expected, and the reverse. Each refresh looks the user up again, so a role change applies at the next refresh. The **Expire my token** button shows the whole flow in the request log.
 
 ## Known limits (on purpose)
 
