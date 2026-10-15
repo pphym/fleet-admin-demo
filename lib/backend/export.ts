@@ -10,7 +10,7 @@ import { COLUMNS, plateFilter } from "@/lib/pagination";
 const MAX_ROWS = 20_000;
 
 // GET /api/backend/vehicles/export?q=: every vehicle matching the search, as .xlsx
-export function GET(request: NextRequest) {
+export function exportVehiclesHandler(request: NextRequest) {
   const { error } = authorize(request, "VIEW");
   if (error) return error;
 

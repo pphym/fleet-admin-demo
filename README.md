@@ -68,7 +68,7 @@ Browser ──(httpOnly cookie)──▶ /api/vehicles/*  (BFF)
                                                             verify + re-check role → 401 / 403
 ```
 
-- **One catch-all route** ([app/api/vehicles/[[...path]]/route.ts](app/api/vehicles/[[...path]]/route.ts)) covers the whole namespace instead of one file per endpoint.
+- **One catch-all route per namespace.** [lib/bff.ts](lib/bff.ts) builds the proxy, and each namespace only declares its method → action map ([app/api/vehicles/[[...path]]/route.ts](app/api/vehicles/[[...path]]/route.ts)).
 - **Fail closed.** A method with no mapped action, or a role not in the grant table, is denied.
 - **Defence in depth.** The backend accepts only `Bearer` (a cookie gets 401) and re-checks the role, because anyone can call it directly.
 - **Same error shape everywhere:** `{ success: false, message }`. The backend's status code passes through unchanged.
@@ -133,4 +133,8 @@ Tests: [test/excel.test.ts](test/excel.test.ts) reads the generated file back an
 
 - The data lives in memory and is re-seeded on restart, so deletes don't survive a restart. For durable data, swap in Turso or Postgres; the SQL stays the same.
 - The demo users have no passwords. This repo is about the BFF, not about login.
-- The "backend" lives in the same app. Set `BACKEND_URL` to point the BFF at a separate service.
+- The "backend" lives in the same app, as a single route ([app/api/backend/[...path]/route.ts](app/api/backend/[...path]/route.ts)) that dispatches to [lib/backend/](lib/backend). On serverless hosts each route runs in its own function with its own memory, so one route means one in-memory DB. Set `BACKEND_URL` to point the BFF at a separate service.
+
+## Deploy (Vercel)
+
+Import the GitHub repo at vercel.com, add the environment variable `JWT_SECRET` (any long random string, e.g. `openssl rand -hex 32`), and deploy. On a host that scales out, the demo data is per instance and resets on a cold start.

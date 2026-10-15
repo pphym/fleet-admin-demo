@@ -7,13 +7,13 @@ import { applyChanges, clearState, parseChanges, readState } from "@/lib/uiState
 // Every query is scoped to the token's user: there is no way to name
 // another user's state in the request.
 
-export function GET(request: NextRequest) {
+export function getUiState(request: NextRequest) {
   const { user, error } = authorize(request, "VIEW");
   if (error) return error;
   return NextResponse.json({ success: true, state: readState(getDb(), user.sub) });
 }
 
-export async function PATCH(request: NextRequest) {
+export async function patchUiState(request: NextRequest) {
   const { user, error } = authorize(request, "VIEW");
   if (error) return error;
 
@@ -24,7 +24,7 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json({ success: true });
 }
 
-export function DELETE(request: NextRequest) {
+export function deleteUiState(request: NextRequest) {
   const { user, error } = authorize(request, "VIEW");
   if (error) return error;
   clearState(getDb(), user.sub);

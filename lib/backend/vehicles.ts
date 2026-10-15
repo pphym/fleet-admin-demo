@@ -5,7 +5,7 @@ import { fail } from "@/lib/http";
 import { BadCursorError, listVehicles } from "@/lib/pagination";
 
 // GET /api/backend/vehicles?cursor=&dir=next|prev&limit=20&q=&slow=1
-export async function GET(request: NextRequest) {
+export async function listVehiclesHandler(request: NextRequest) {
   const { error } = authorize(request, "VIEW");
   if (error) return error;
 

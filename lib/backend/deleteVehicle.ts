@@ -3,11 +3,11 @@ import { authorize } from "@/lib/backendAuth";
 import { getDb } from "@/lib/db";
 import { fail } from "@/lib/http";
 
-export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+export function deleteVehicleHandler(request: NextRequest, rawId: string) {
   const { error } = authorize(request, "DELETE");
   if (error) return error;
 
-  const id = Number((await ctx.params).id);
+  const id = Number(rawId);
   if (!Number.isInteger(id) || id < 1) return fail(400, "Invalid id");
 
   const { changes } = getDb().prepare("DELETE FROM vehicles WHERE id = ?").run(id);
