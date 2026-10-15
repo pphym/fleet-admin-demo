@@ -5,8 +5,10 @@ A small vehicle admin table that shows patterns I use at work, rebuilt from scra
 1. **Keyset (cursor) pagination**: First / Prev / Next / Last over 10,000 rows. Every page costs the same, and rows are never skipped or repeated while the data changes.
 2. **BFF with server-side, fail-closed permissions**: the browser never sees the JWT. A Next.js route reads it from an httpOnly cookie, checks the permission for the action, and forwards the request to the backend as `Authorization: Bearer`.
 3. **Per-user view state with refresh-token retry**: rows per page, search and current page are saved to the user's account. Only the changed keys are sent, in one debounced bulk request. An expired token is refreshed and the request retried, without the user noticing.
+4. **Cancellable loading**: Cancel aborts the request in the browser, in the BFF and in the backend.
+5. **Styled Excel export**: built on the server, with auto-fit columns, number and date formats, and a total row with a live `SUM` formula.
 
-No database server and no extra dependencies: it uses Next.js, Node's built-in `node:sqlite` (in memory) and `node:crypto` for the JWT.
+No database server: it uses Next.js, Node's built-in `node:sqlite` (in memory) and `node:crypto` for the JWT. The only other dependency is `xlsx-js-style`, for the Excel file.
 
 ## Run it
 
@@ -113,6 +115,19 @@ Cancel → AbortController.abort()            (browser)
 - The rows already on screen stay. The view (page, search) goes back to match them, without fetching again.
 - Clicking again while a request is in flight aborts the stale request, so a slow old response can never overwrite a newer page.
 - The request log shows aborted requests as `cancelled`.
+
+## 5. Excel export
+
+`GET /api/vehicles/export?q=` returns every vehicle that matches the current search as an `.xlsx` file ([lib/excel.ts](lib/excel.ts)). It goes through the same BFF permission check as everything else.
+
+- **Built on the server.** The roughly 1 MB spreadsheet library never ships to the browser. 10,000 rows take about 0.2 s and produce a 1 MB file.
+- **Formatting.** Bold header, Calibri, `#,##0` for kilometres, and `yyyy-mm-dd hh:mm` dates. Dates are converted from UTC by hand, so the file does not depend on the server's time zone.
+- **Auto-fit columns.** Each column is as wide as its longest value *as Excel will display it* (`124,456`, not `124456`).
+- **Total row.** A live `SUM(E2:E…)` formula with a cached value, so viewers that don't recalculate still show the number.
+- **Download through `fetch` + blob** instead of a plain link, so an expired token is refreshed and retried like any other request.
+- **Row cap.** More than 20,000 rows returns 400 ("narrow the search").
+
+Tests: [test/excel.test.ts](test/excel.test.ts) reads the generated file back and checks the formula, the UTC dates and the column widths.
 
 ## Known limits (on purpose)
 

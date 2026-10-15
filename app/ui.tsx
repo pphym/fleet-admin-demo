@@ -49,6 +49,7 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
   const [reload, setReload] = useState(0);
   const [slow, setSlow] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const inflight = useRef<AbortController | null>(null);
   // the view behind the rows on screen; Cancel goes back to it
   const shown = useRef<{ key: string; view: View } | null>(null);
@@ -124,6 +125,22 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
     }
   }
 
+  // Fetch + blob instead of a plain link, so an expired token is refreshed
+  // and retried like any other request.
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      const res = await call("GET", `/api/vehicles/export${view.q ? `?q=${encodeURIComponent(view.q)}` : ""}`);
+      if (!res.ok) return setError(`${res.status}: ${(await res.json()).message}`);
+      const name = res.headers.get("content-disposition")?.match(/filename="(.+)"/)?.[1] ?? "vehicles.xlsx";
+      const url = URL.createObjectURL(await res.blob());
+      Object.assign(document.createElement("a"), { href: url, download: name }).click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function resetView() {
     if (await reset()) {
       setSearch("");
@@ -181,6 +198,9 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
           <label>
             <input type="checkbox" checked={slow} onChange={(e) => setSlow(e.target.checked)} /> Slow backend (3 s)
           </label>
+          <button className="ghost" onClick={exportExcel} disabled={exporting}>
+            {exporting ? "Exporting…" : "Export Excel"}
+          </button>
           <button className="ghost" onClick={resetView} disabled={status !== "ready"}>
             Reset view
           </button>
@@ -209,10 +229,11 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
           <table>
             <thead>
               <tr>
-                <th>ID</th>
+                <th className="num">ID</th>
                 <th>Plate</th>
                 <th>Model</th>
                 <th>Status</th>
+                <th className="num">Odometer (km)</th>
                 <th>Created (UTC)</th>
                 <th aria-label="Actions" />
               </tr>
@@ -224,6 +245,7 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
                   <td>{v.plate}</td>
                   <td>{v.model}</td>
                   <td><span className={`dot ${v.status}`} />{v.status}</td>
+                  <td className="num">{v.odometerKm.toLocaleString("en-US")}</td>
                   <td>{fmt.format(v.createdAt)}</td>
                   <td>
                     {/* Shown to the viewer on purpose: the BFF answers 403 anyway. */}
@@ -232,7 +254,7 @@ export function VehicleTable({ name, role }: { name: string; role: Role }) {
                 </tr>
               ))}
               {page?.items.length === 0 && (
-                <tr><td colSpan={6} className="muted">No vehicles match.</td></tr>
+                <tr><td colSpan={7} className="muted">No vehicles match.</td></tr>
               )}
             </tbody>
           </table>

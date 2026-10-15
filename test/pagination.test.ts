@@ -61,7 +61,7 @@ test("a new row inserted mid-walk: cursor never repeats a row, OFFSET does", () 
 
   // someone adds the newest vehicle while the user is on page 1
   db.prepare(
-    "INSERT INTO vehicles (plate, model, status, created_at) VALUES ('NEW-1', 'x', 'online', ?)",
+    "INSERT INTO vehicles (plate, model, status, odometer_km, created_at) VALUES ('NEW-1', 'x', 'online', 0, ?)",
   ).run(Date.UTC(2030, 0, 1));
 
   const p2 = listVehicles(db, { limit: LIMIT, cursor: p1.nextCursor });

@@ -18,6 +18,20 @@ export function decodeCursor(s: string | null | undefined): Cursor | null {
   throw new BadCursorError("Invalid cursor");
 }
 
+export const COLUMNS =
+  "id, plate, model, status, odometer_km AS odometerKm, created_at AS createdAt";
+
+/** `plate LIKE %q%`, with LIKE wildcards in the user's text escaped. Shared with export. */
+export function plateFilter(q?: string | null) {
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (q) {
+    where.push("plate LIKE ? ESCAPE '\\'");
+    args.push(`%${q.replace(/[\\%_]/g, "\\$&")}%`);
+  }
+  return { where, args };
+}
+
 export type PageQuery = {
   cursor?: string | null;
   dir?: "next" | "prev";
@@ -47,12 +61,7 @@ export function listVehicles(db: DatabaseSync, query: PageQuery): Page {
   const back = query.dir === "prev";
   const { limit } = query;
 
-  const where: string[] = [];
-  const args: (string | number)[] = [];
-  if (query.q) {
-    where.push("plate LIKE ? ESCAPE '\\'");
-    args.push(`%${query.q.replace(/[\\%_]/g, "\\$&")}%`);
-  }
+  const { where, args } = plateFilter(query.q);
   if (after) {
     where.push(back ? "(created_at, id) > (?, ?)" : "(created_at, id) < (?, ?)");
     args.push(after.c, after.i);
@@ -61,7 +70,7 @@ export function listVehicles(db: DatabaseSync, query: PageQuery): Page {
 
   const rows = db
     .prepare(
-      `SELECT id, plate, model, status, created_at AS createdAt
+      `SELECT ${COLUMNS}
          FROM vehicles
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY created_at ${order}, id ${order}

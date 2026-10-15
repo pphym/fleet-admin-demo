@@ -5,6 +5,7 @@ export type Vehicle = {
   plate: string;
   model: string;
   status: string;
+  odometerKm: number;
   createdAt: number;
 };
 
@@ -20,11 +21,12 @@ export function createDb(rows: number, spanHours = 24 * 365): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(`
     CREATE TABLE vehicles (
-      id         INTEGER PRIMARY KEY,
-      plate      TEXT    NOT NULL,
-      model      TEXT    NOT NULL,
-      status     TEXT    NOT NULL,
-      created_at INTEGER NOT NULL
+      id          INTEGER PRIMARY KEY,
+      plate       TEXT    NOT NULL,
+      model       TEXT    NOT NULL,
+      status      TEXT    NOT NULL,
+      odometer_km INTEGER NOT NULL,
+      created_at  INTEGER NOT NULL
     );
     CREATE INDEX vehicles_keyset ON vehicles (created_at DESC, id DESC);
 
@@ -37,12 +39,17 @@ export function createDb(rows: number, spanHours = 24 * 365): DatabaseSync {
     );
   `);
 
-  // deterministic PRNG so every boot / test run sees the same data
+  // deterministic PRNG (mulberry32) so every boot / test run sees the same data
   let seed = 42;
-  const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+  const rand = () => {
+    let t = (seed = (seed + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
   const start = Date.UTC(2025, 0, 1);
   const insert = db.prepare(
-    "INSERT INTO vehicles (plate, model, status, created_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO vehicles (plate, model, status, odometer_km, created_at) VALUES (?, ?, ?, ?, ?)",
   );
 
   db.exec("BEGIN");
@@ -51,6 +58,7 @@ export function createDb(rows: number, spanHours = 24 * 365): DatabaseSync {
       `DEMO-${String(i).padStart(5, "0")}`,
       MODELS[Math.floor(rand() * MODELS.length)],
       STATUSES[Math.floor(rand() * STATUSES.length)],
+      Math.floor(rand() * 300_000),
       start + Math.floor(rand() * spanHours) * 3_600_000,
     );
   }

@@ -46,6 +46,7 @@ h2 { margin: 0 0 12px; font-size: 16px; }
   display: grid;
   gap: 12px;
 }
+.card > * { min-width: 0; } /* let the table scroll inside the card, not the page */
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spread { justify-content: space-between; }
 
@@ -62,7 +63,6 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.ghost { background: transparent; color: var(--text); border-color: var(--border); }
 button.danger { color: var(--danger); }
 input[type="search"] { flex: 1; min-width: 200px; }
-.row > .row { flex-wrap: nowrap; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; }
@@ -111,7 +111,8 @@ input[type="checkbox"] { padding: 0; vertical-align: middle; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; }
-td.num { font-variant-numeric: tabular-nums; color: var(--muted); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+td:first-child { color: var(--muted); }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
 .dot.online { background: var(--ok); }
